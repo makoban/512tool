@@ -2,65 +2,215 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Webトリミング(可変サイズ2:1)</title>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <title>スマホ向けトリミングUI</title>
     <style>
-      #preview {
-        border: 1px solid #333;
-        width: 640px;
-        height: 360px; /* 適当に。JSで実際には描画 */
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: sans-serif;
+      }
+      #fileInputArea {
+        padding: 8px;
+        background: #f0f0f0;
+      }
+      #previewContainer {
         position: relative;
+        width: 100%; /* スマホ全幅 */
+        max-width: 600px; /* 例: タブレットなら600に抑える */
+        margin: auto;
+        background: #333;
       }
-      #videoFrame {
-        max-width: 100%;
+      #previewImg {
         display: block;
-        position: absolute;
-        left: 0;
-        top: 0;
+        width: 100%; /* 横幅いっぱい */
+        height: auto; /* アスペクト比を自動維持 */
+        touch-action: none; /* ピンチ等を横取り */
       }
-      canvas {
+      #overlayCanvas {
         position: absolute;
-        left: 0;
         top: 0;
+        left: 0;
+        touch-action: none; /* ピンチ等を横取り */
       }
-      #downloadLink a {
+      #buttonsArea {
         margin: 8px;
-        display: inline-block;
       }
     </style>
   </head>
   <body>
-    <h1>Web版トリミング</h1>
-
-    <!-- アップロードフォーム -->
-    <form id="uploadForm">
-      <input type="file" name="video" accept="video/*" />
-      <button type="submit">アップロード</button>
-    </form>
-    <div id="infoArea"></div>
-
-    <!-- プレビュー -->
-    <div id="preview">
-      <img id="videoFrame" src="" />
-      <canvas id="overlay"></canvas>
+    <div id="fileInputArea">
+      <input type="file" id="videoFile" accept="video/*,image/*" />
     </div>
 
-    <!-- フレーム指定 -->
-    <div>
-      フレーム:
-      <input type="number" id="frameIndex" value="0" style="width: 80px" />
-      <button id="showFrameBtn">表示</button>
+    <div id="previewContainer">
+      <!-- ローカルプレビュー表示: <video> or <img>. 簡単のため <img> で1フレームサムネを表示 -->
+      <img id="previewImg" src="" alt="プレビュー" />
+      <canvas id="overlayCanvas"></canvas>
     </div>
 
-    <!-- 枠の左上と大きさ(2:1)を表示/指定(ここでは手動→JSで計算しても可) -->
-    <div>
-      X=<input type="number" id="cropX" value="0" style="width: 60px" />
-      Y=<input type="number" id="cropY" value="0" style="width: 60px" />
-      W=<input type="number" id="cropW" value="512" style="width: 60px" />
-      H=<input type="number" id="cropH" value="256" style="width: 60px" />
+    <div id="buttonsArea">
+      <button id="transformBtn">トリミング開始</button>
+      <div id="resultArea"></div>
     </div>
 
-    <button id="transformBtn">トリミング開始</button>
-    <div id="downloadLink"></div>
+    <script>
+      (function () {
+        const fileInput = document.getElementById("videoFile");
+        const previewImg = document.getElementById("previewImg");
+        const overlay = document.getElementById("overlayCanvas");
+        const transformBtn = document.getElementById("transformBtn");
+        const resultArea = document.getElementById("resultArea");
+
+        // === トリミング枠(2:1)情報 ===
+        let box = {
+          x: 50, // 枠の左上
+          y: 50,
+          w: 200, // 幅
+          h: 100, // 高さ (2:1)
+        };
+
+        let isDragging = false;
+        let lastTouches = []; // タッチ点
+
+        // 1) ファイル選択されたら即プレビュー
+        fileInput.addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          // <img> でローカルプレビュー表示: createObjectURL
+          const url = URL.createObjectURL(file);
+          previewImg.src = url;
+
+          // TODO: 動画なら <video> + canvasでサムネ生成など
+          // ここでは簡単に "最初のフレーム" 等は割愛
+        });
+
+        // 2) 画像(プレビュー)のサイズが決まったら canvasも追従
+        previewImg.addEventListener("load", () => {
+          overlay.width = previewImg.clientWidth;
+          overlay.height = previewImg.clientHeight;
+          drawOverlay();
+        });
+
+        // 3) 指でドラッグ・ピンチ → box.x,y,w,h を変更
+        overlay.addEventListener("touchstart", onTouchStart, {
+          passive: false,
+        });
+        overlay.addEventListener("touchmove", onTouchMove, { passive: false });
+        overlay.addEventListener("touchend", onTouchEnd);
+
+        function onTouchStart(e) {
+          e.preventDefault();
+          lastTouches = e.touches; // タッチ点配列
+        }
+        function onTouchMove(e) {
+          e.preventDefault();
+          if (lastTouches.length == 0) return;
+
+          const touches = e.touches;
+          if (touches.length == 1 && lastTouches.length == 1) {
+            // 単指ドラッグ: 枠を移動
+            let dx = touches[0].clientX - lastTouches[0].clientX;
+            let dy = touches[0].clientY - lastTouches[0].clientY;
+            box.x += dx;
+            box.y += dy;
+          } else if (touches.length == 2 && lastTouches.length == 2) {
+            // ピンチズーム: 2点間の距離比較
+            let distOld = distanceBetween(lastTouches[0], lastTouches[1]);
+            let distNew = distanceBetween(touches[0], touches[1]);
+            let scale = distNew / distOld;
+            // 枠の中心を固定して拡縮
+            let centerX = box.x + box.w / 2;
+            let centerY = box.y + box.h / 2;
+            box.w *= scale;
+            box.h = box.w / 2; // 2:1のアスペクト保持
+            // 中心が変わらないように
+            box.x = centerX - box.w / 2;
+            box.y = centerY - box.h / 2;
+          }
+          lastTouches = e.touches;
+          drawOverlay();
+        }
+        function onTouchEnd(e) {
+          if (e.touches.length == 0) {
+            lastTouches = [];
+          } else {
+            lastTouches = e.touches;
+          }
+        }
+        function distanceBetween(t1, t2) {
+          let dx = t1.clientX - t2.clientX;
+          let dy = t1.clientY - t2.clientY;
+          return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        // 4) overlayCanvas に枠&グレー部分を描画
+        function drawOverlay() {
+          const ctx = overlay.getContext("2d");
+          ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+          // 旧512x256上のsubregionをイメージ→ここでは簡単に grey(下段左), red,blue などを実寸で再現せず
+          // "グレー部分を塗りつぶす" 例
+          // しかし previewImg はユーザーの実際の動画と違う比率かもしれないので、本当に512x256レイアウトを
+          // 2D表示したいなら何らかの変換が必要。
+          // ここでは "枠外" を灰色半透明に塗る、など簡易的にします:
+
+          // 全面半透明
+          ctx.fillStyle = "rgba(128,128,128,0.3)";
+          ctx.fillRect(0, 0, overlay.width, overlay.height);
+
+          // 枠の部分をくり抜く
+          ctx.clearRect(box.x, box.y, box.w, box.h);
+
+          // 最後に赤枠
+          ctx.strokeStyle = "red";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(box.x, box.y, box.w, box.h);
+        }
+
+        // 5) 「トリミング開始」ボタン
+        transformBtn.addEventListener("click", async () => {
+          if (!fileInput.files[0]) {
+            alert("ファイルを選択してください");
+            return;
+          }
+          // upload してサーバに保存済み or not ?
+          //   - 今回の例では "即サーバアップロード" していない。
+          //   - なら "upload→transform"の流れを自動化する or
+          //   - ここでまとめて送る など実装が分かれる
+          // ここでは簡単に /transform へ {crop_x, crop_y, ...} POST する例
+          //   ※ しかし実際には "サーバ側が既に保存している videoファイル" が必要。
+          //   ※ 'file_id' を記憶していたら送る形になる
+
+          const fileId = "xxx_abc.mp4"; //本当は /upload のレスポンスで得た file_id
+          const scaleFactor = 1; // 例: preview が動画より縮小表示されている場合計算
+          const bodyData = {
+            file_id: fileId,
+            crop_x: Math.round(box.x / scaleFactor),
+            crop_y: Math.round(box.y / scaleFactor),
+            crop_w: Math.round(box.w / scaleFactor),
+            crop_h: Math.round(box.h / scaleFactor),
+          };
+          // fetch
+          try {
+            const res = await fetch("/transform", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(bodyData),
+            });
+            const data = await res.json();
+            if (data.error) {
+              alert("失敗: " + data.error);
+            } else {
+              const outFile = data.out_file;
+              const dlUrl = "/download/" + outFile;
+              resultArea.innerHTML = `<a href="${dlUrl}" target="_blank">変換後ダウンロード</a>`;
+            }
+          } catch (err) {
+            alert("通信エラー: " + err);
+          }
+        });
+      })();
+    </script>
   </body>
 </html>
