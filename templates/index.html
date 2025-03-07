@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Webトリミング(可変サイズ2:1)</title>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <style>
+      #preview {
+        border: 1px solid #333;
+        width: 640px;
+        height: 360px; /* 適当に。JSで実際には描画 */
+        position: relative;
+      }
+      #videoFrame {
+        max-width: 100%;
+        display: block;
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+      canvas {
+        position: absolute;
+        left: 0;
+        top: 0;
+      }
+      #downloadLink a {
+        margin: 8px;
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Web版トリミング</h1>
+
+    <!-- アップロードフォーム -->
+    <form id="uploadForm">
+      <input type="file" name="video" accept="video/*" />
+      <button type="submit">アップロード</button>
+    </form>
+    <div id="infoArea"></div>
+
+    <!-- プレビュー -->
+    <div id="preview">
+      <img id="videoFrame" src="" />
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- フレーム指定 -->
+    <div>
+      フレーム:
+      <input type="number" id="frameIndex" value="0" style="width: 80px" />
+      <button id="showFrameBtn">表示</button>
+    </div>
+
+    <!-- 枠の左上と大きさ(2:1)を表示/指定(ここでは手動→JSで計算しても可) -->
+    <div>
+      X=<input type="number" id="cropX" value="0" style="width: 60px" />
+      Y=<input type="number" id="cropY" value="0" style="width: 60px" />
+      W=<input type="number" id="cropW" value="512" style="width: 60px" />
+      H=<input type="number" id="cropH" value="256" style="width: 60px" />
+    </div>
+
+    <button id="transformBtn">トリミング開始</button>
+    <div id="downloadLink"></div>
+  </body>
+</html>
